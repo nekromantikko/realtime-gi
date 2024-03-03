@@ -1,7 +1,9 @@
 #include <windows.h>
+#include "system.h"
 #include "renderer.h"
 
 static bool running;
+static Rendering::Renderer* rendererPtr; // Stupid hack...
 
 LRESULT CALLBACK MainWindowCallback(_In_ HWND hwnd, _In_ UINT uMsg, _In_ WPARAM wParam, _In_ LPARAM lParam) {
     LRESULT result = 0;
@@ -10,7 +12,9 @@ LRESULT CALLBACK MainWindowCallback(_In_ HWND hwnd, _In_ UINT uMsg, _In_ WPARAM 
     {
         case WM_SIZE:
         {
-            OutputDebugStringA("WM_SIZE\n");
+            if (rendererPtr) {
+                rendererPtr->ResizeSurface();
+            }
             break;
         }
         case WM_DESTROY:
@@ -25,7 +29,6 @@ LRESULT CALLBACK MainWindowCallback(_In_ HWND hwnd, _In_ UINT uMsg, _In_ WPARAM 
         }
         case WM_ACTIVATEAPP:
         {
-            OutputDebugStringA("WM_ACTIVATEAPP\n");
             break;
         }
         case WM_PAINT:
@@ -67,11 +70,11 @@ int APIENTRY WinMain(_In_ HINSTANCE hInst, _In_ HINSTANCE hInstPrev, _In_ PSTR c
         0,
         windowClass.lpszClassName,
         "Hello world",
-        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE,
+        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE | WS_THICKFRAME,
         CW_USEDEFAULT,
         CW_USEDEFAULT,
-        1920,
-        1080,
+        1024,
+        768,
         0,
         0,
         hInst,
@@ -79,6 +82,7 @@ int APIENTRY WinMain(_In_ HINSTANCE hInst, _In_ HINSTANCE hInstPrev, _In_ PSTR c
     );
 
     Rendering::Renderer renderer(hInst, windowHandle);
+    rendererPtr = &renderer;
 
     MSG message;
     running = true;
@@ -90,6 +94,8 @@ int APIENTRY WinMain(_In_ HINSTANCE hInst, _In_ HINSTANCE hInstPrev, _In_ PSTR c
 
             TranslateMessage(&message);
             DispatchMessage(&message);
+
+            renderer.Render();
         }
     }
 
