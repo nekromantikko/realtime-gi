@@ -70,12 +70,16 @@ namespace Rendering {
 		void FreeFramebufferAttachments();
 		void CreatePrimaryFramebuffer();
 		void FreePrimaryFramebuffer();
+		void CreateBlitPipeline();
+		void FreeBlitPipeline();
+
 		u32 GetDeviceMemoryTypeIndex(u32 typeFilter, VkMemoryPropertyFlags propertyFlags);
 		VkCommandBuffer GetTemporaryCommandBuffer();
 		void AllocateMemory(VkMemoryRequirements requirements, VkMemoryPropertyFlags properties, VkDeviceMemory& outMemory);
 		void AllocateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memProps, Buffer& outBuffer);
 		void CopyBuffer(const VkBuffer& src, const VkBuffer& dst, VkDeviceSize size);
 		void FreeBuffer(Buffer& buffer);
+		VkShaderModule CreateShaderModule(const char* code, const u32 size);
 
 		VkInstance vkInstance;
 
@@ -117,6 +121,12 @@ namespace Rendering {
 		// Render passes
 		VkRenderPass forwardRenderPass;
 		VkRenderPass finalBlitRenderPass;
+
+		// Pipelines
+		VkShaderModule blitVert;
+		VkShaderModule blitFrag;
+		VkPipelineLayout blitPipelineLayout;
+		VkPipeline blitPipeline;
 
 		MemoryPool<TextureImpl> textures = MemoryPool<TextureImpl>(MAX_TEXTURE_COUNT);
 	};
