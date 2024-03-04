@@ -19,11 +19,23 @@ namespace Rendering {
 		void WaitForAllCommands();
 		TextureHandle CreateTexture(void *data, u32 width, u32 height, TextureType type, ColorSpace space = COLORSPACE_SRGB, TextureFilter filter = (TextureFilter)VK_FILTER_LINEAR, bool generateMips = true);
 		void FreeTexture(TextureHandle handle);
+		MeshHandle CreateMesh(const MeshData& data);
+		void FreeMesh(MeshHandle handle);
 
+		r32 GetSurfaceAspect() const;
+
+		void SetInstanceData(PerInstanceData* instances, u32 length);
+		void SetCameraData(CameraData cameraData);
+		void SetLightingData(LightingData lightingData);
 		void BeginRenderCommands();
 		void DoFinalBlit();
 		void EndRenderCommands();
 	private:
+		struct Buffer {
+			VkBuffer buffer;
+			VkDeviceMemory memory;
+		};
+
 		struct TextureImpl {
 			VkImage image;
 			VkImageView view;
@@ -31,9 +43,16 @@ namespace Rendering {
 			VkSampler sampler;
 		};
 
-		struct Buffer {
-			VkBuffer buffer;
-			VkDeviceMemory memory;
+		struct MeshImpl {
+			u32 vertexCount;
+			Buffer vertexPositionBuffer;
+			Buffer vertexTexcoord0Buffer;
+			Buffer vertexNormalBuffer;
+			Buffer vertexTangentBuffer;
+			Buffer vertexColorBuffer;
+
+			u32 indexCount;
+			Buffer indexBuffer;
 		};
 
 		struct CommandBuffer {
@@ -72,13 +91,16 @@ namespace Rendering {
 		void FreePrimaryFramebuffer();
 		void CreateBlitPipeline();
 		void FreeBlitPipeline();
+		void CreateUniformBuffers();
+		void FreeUniformBuffers();
 
 		u32 GetDeviceMemoryTypeIndex(u32 typeFilter, VkMemoryPropertyFlags propertyFlags);
 		VkCommandBuffer GetTemporaryCommandBuffer();
 		void AllocateMemory(VkMemoryRequirements requirements, VkMemoryPropertyFlags properties, VkDeviceMemory& outMemory);
 		void AllocateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memProps, Buffer& outBuffer);
 		void CopyBuffer(const VkBuffer& src, const VkBuffer& dst, VkDeviceSize size);
-		void FreeBuffer(Buffer& buffer);
+		void CopyRawDataToBuffer(void* src, const VkBuffer& dst, VkDeviceSize size);
+		void FreeBuffer(const Buffer& buffer);
 		VkShaderModule CreateShaderModule(const char* code, const u32 size);
 
 		VkInstance vkInstance;
@@ -109,15 +131,6 @@ namespace Rendering {
 
 		VkDescriptorPool descriptorPool;
 
-		// Render targets
-		FramebufferAttachemnt colorAttachment;
-		FramebufferAttachemnt colorAttachmentResolve;
-		FramebufferAttachemnt depthAttachment;
-		FramebufferAttachemnt depthAttachmentResolve;
-
-		VkFramebuffer primaryFramebuffer;
-		VkSampler primaryFramebufferSampler;
-
 		// Render passes
 		VkRenderPass forwardRenderPass;
 		VkRenderPass finalBlitRenderPass;
@@ -128,6 +141,35 @@ namespace Rendering {
 		VkPipelineLayout blitPipelineLayout;
 		VkPipeline blitPipeline;
 
-		MemoryPool<TextureImpl> textures = MemoryPool<TextureImpl>(MAX_TEXTURE_COUNT);
+		// Shader bindings
+		static constexpr u32 cameraDataBinding = 0;
+		Buffer cameraDataBuffer;
+
+		static constexpr u32 lightingDataBinding = 1;
+		Buffer lightingDataBuffer;
+
+		static constexpr u32 perInstanceDataBinding = 2;
+		Buffer perInstanceBuffer;
+		u32 perInstanceDynamicOffset;
+
+		static constexpr u32 shaderDataBinding = 3;
+		Buffer shaderDataBuffer;
+
+		static constexpr u32 samplerBinding = 4;
+		static constexpr u32 maxSamplerCount = 8;
+		MemoryPool<TextureImpl> textures = MemoryPool<TextureImpl>(maxTextureCount);
+
+		MemoryPool<MeshImpl> meshes = MemoryPool<MeshImpl>(maxVertexBufferCount);
+
+		// Render targets
+		static constexpr u32 colorBinding = 14;
+		FramebufferAttachemnt colorAttachment;
+		FramebufferAttachemnt colorAttachmentResolve;
+		static constexpr u32 depthBinding = 15;
+		FramebufferAttachemnt depthAttachment;
+		FramebufferAttachemnt depthAttachmentResolve;
+
+		VkFramebuffer primaryFramebuffer;
+		VkSampler primaryFramebufferSampler;
 	};
 }

@@ -5,17 +5,19 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include "quaternion.h"
 
-#define MAX_MATERIAL_COUNT 256
-#define MAX_SHADER_COUNT 64
-#define MAX_TEXTURE_COUNT 256
-#define MAX_VERTEX_BUFFER_COUNT 256
+constexpr u32 maxMaterialCount = 256;
+constexpr u32 maxShaderCount = 64;
+constexpr u32 maxTextureCount = 256;
+constexpr u32 maxVertexBufferCount = 256;
+constexpr u32 maxDrawcallCount = 4096;
+constexpr u32 maxTransformCount = 65536;
 
 namespace Rendering {
 	typedef glm::vec3 VertexPos;
 	typedef glm::vec2 VertexUV;
 	typedef glm::vec3 VertexNormal;
 	typedef glm::vec4 VertexTangent;
-	typedef glm::vec3 Color;
+	typedef glm::vec4 Color;
 
 	typedef s32 ShaderHandle;
 	typedef s32 TextureHandle;
@@ -109,5 +111,24 @@ namespace Rendering {
         glm::vec3 position;
         Quaternion rotation;
         glm::vec3 scale;
+    };
+
+    struct CameraData {
+        glm::mat4 view; // Transformation from world space to view (camera) space
+        glm::mat4 proj; // Transformation from view space to screen space
+        glm::vec3 pos;
+    };
+
+    // TODO: Support additional lights
+    struct LightingData {
+        glm::mat4 mainLightMat;
+        glm::mat4 mainLightProjMat;
+        Color mainLightColor;
+        glm::vec4 mainLightDirection;
+        Color ambientColor;
+    };
+
+    struct PerInstanceData {
+        glm::mat4 model;
     };
 }

@@ -70,10 +70,14 @@ namespace Rendering {
 		CreatePrimaryFramebuffer();
 
 		CreateBlitPipeline();
+
+		CreateUniformBuffers();
 	}
 	Vulkan::~Vulkan() {
 		// Wait for all commands to execute first
 		WaitForAllCommands();
+
+		FreeUniformBuffers();
 
 		FreeBlitPipeline();
 
@@ -694,6 +698,17 @@ namespace Rendering {
 		vkDestroyShaderModule(device, blitFrag, nullptr);
 	}
 
+	void Vulkan::CreateUniformBuffers() {
+		AllocateBuffer(sizeof(CameraData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, cameraDataBuffer);
+		AllocateBuffer(sizeof(LightingData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, lightingDataBuffer);
+		AllocateBuffer(sizeof(PerInstanceData) * maxDrawcallCount, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, perInstanceBuffer);
+	}
+	void Vulkan::FreeUniformBuffers() {
+		FreeBuffer(cameraDataBuffer);
+		FreeBuffer(lightingDataBuffer);
+		FreeBuffer(perInstanceBuffer);
+	}
+
 	void Vulkan::CreateFramebufferAttachments() {
 		// Color attachment (multisampled)
 		VkImageCreateInfo imageInfo{};
@@ -885,7 +900,21 @@ namespace Rendering {
 		vkFreeCommandBuffers(device, primaryCommandPool, 1, &temp);
 	}
 
-	void Vulkan::FreeBuffer(Buffer& buffer) {
+	void Vulkan::CopyRawDataToBuffer(void* src, const VkBuffer& dst, VkDeviceSize size) {
+		Buffer stagingBuffer{};
+		AllocateBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer);
+
+		void* data;
+		vkMapMemory(device, stagingBuffer.memory, 0, size, 0, &data);
+		memcpy(data, src, size);
+		vkUnmapMemory(device, stagingBuffer.memory);
+
+		CopyBuffer(stagingBuffer.buffer, dst, size);
+
+		FreeBuffer(stagingBuffer);
+	}
+
+	void Vulkan::FreeBuffer(const Buffer& buffer) {
 		vkDestroyBuffer(device, buffer.buffer, nullptr);
 		vkFreeMemory(device, buffer.memory, nullptr);
 	}
@@ -1128,6 +1157,77 @@ namespace Rendering {
 		vkFreeMemory(device, texture.memory, nullptr);
 
 		textures.Remove(handle);
+	}
+
+	MeshHandle Vulkan::CreateMesh(const MeshData& data) {
+		MeshImpl mesh{};
+
+		const VkDeviceSize posBytes = sizeof(glm::vec3) * data.vertexCount;
+		AllocateBuffer(posBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, mesh.vertexPositionBuffer);
+		CopyRawDataToBuffer(data.position, mesh.vertexPositionBuffer.buffer, posBytes);
+
+		const VkDeviceSize uvBytes = sizeof(glm::vec2) * data.vertexCount;
+		AllocateBuffer(uvBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, mesh.vertexTexcoord0Buffer);
+		CopyRawDataToBuffer(data.position, mesh.vertexTexcoord0Buffer.buffer, uvBytes);
+
+		const VkDeviceSize normalBytes = sizeof(glm::vec3) * data.vertexCount;
+		AllocateBuffer(normalBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, mesh.vertexNormalBuffer);
+		CopyRawDataToBuffer(data.position, mesh.vertexNormalBuffer.buffer, normalBytes);
+
+		const VkDeviceSize tangentBytes = sizeof(glm::vec4) * data.vertexCount;
+		AllocateBuffer(tangentBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, mesh.vertexTangentBuffer);
+		CopyRawDataToBuffer(data.position, mesh.vertexTangentBuffer.buffer, tangentBytes);
+
+		const VkDeviceSize colorBytes = sizeof(Color) * data.vertexCount;
+		AllocateBuffer(colorBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, mesh.vertexColorBuffer);
+		CopyRawDataToBuffer(data.position, mesh.vertexColorBuffer.buffer, colorBytes);
+
+		const VkDeviceSize indexBytes = sizeof(Triangle) * data.triangleCount;
+		AllocateBuffer(indexBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, mesh.indexBuffer);
+		CopyRawDataToBuffer(data.position, mesh.indexBuffer.buffer, indexBytes);
+
+		mesh.vertexCount = data.vertexCount;
+		mesh.indexCount = data.triangleCount * 3;
+
+		return meshes.Add(mesh);
+	}
+	void Vulkan::FreeMesh(MeshHandle handle) {
+		const MeshImpl& mesh = meshes[handle];
+
+		FreeBuffer(mesh.vertexPositionBuffer);
+		FreeBuffer(mesh.vertexTexcoord0Buffer);
+		FreeBuffer(mesh.vertexNormalBuffer);
+		FreeBuffer(mesh.vertexTangentBuffer);
+		FreeBuffer(mesh.vertexColorBuffer);
+		FreeBuffer(mesh.indexBuffer);
+
+		meshes.Remove(handle);
+	}
+
+	r32 Vulkan::GetSurfaceAspect() const {
+		VkExtent2D extent = surfaceCapabilities.currentExtent;
+		return extent.width / extent.height;
+	}
+
+	void Vulkan::SetInstanceData(PerInstanceData* instances, u32 length) {
+		for (int i = 0; i < length; i++) {
+			void* data;
+			vkMapMemory(device, perInstanceBuffer.memory, i * 256, sizeof(PerInstanceData), 0, &data);
+			memcpy(data, &instances[i], sizeof(PerInstanceData));
+			vkUnmapMemory(device, perInstanceBuffer.memory);
+		}
+	}
+	void Vulkan::SetCameraData(CameraData cameraData) {
+		void* data;
+		vkMapMemory(device, cameraDataBuffer.memory, 0, sizeof(CameraData), 0, &data);
+		memcpy(data, &cameraData, sizeof(CameraData));
+		vkUnmapMemory(device, cameraDataBuffer.memory);
+	}
+	void Vulkan::SetLightingData(LightingData lightingData) {
+		void* data;
+		vkMapMemory(device, lightingDataBuffer.memory, 0, sizeof(LightingData), 0, &data);
+		memcpy(data, &lightingData, sizeof(LightingData));
+		vkUnmapMemory(device, lightingDataBuffer.memory);
 	}
 
 	void Vulkan::BeginRenderCommands() {

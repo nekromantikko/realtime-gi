@@ -10,7 +10,7 @@ LRESULT CALLBACK MainWindowCallback(_In_ HWND hwnd, _In_ UINT uMsg, _In_ WPARAM 
 
     switch (uMsg)
     {
-        case WM_SIZE:
+        case WM_EXITSIZEMOVE:
         {
             if (rendererPtr) {
                 rendererPtr->ResizeSurface();
