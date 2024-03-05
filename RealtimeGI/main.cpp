@@ -84,6 +84,83 @@ int APIENTRY WinMain(_In_ HINSTANCE hInst, _In_ HINSTANCE hInstPrev, _In_ PSTR c
     Rendering::Renderer renderer(hInst, windowHandle);
     rendererPtr = &renderer;
 
+    Rendering::MeshCreateInfo cubeInfo{};
+    glm::vec3 cubeVerts[] = {
+        {-1,-1,-1},
+        {1,-1,-1},
+        {1,-1,1},
+        {-1,-1,1},
+        {-1,1,-1},
+        {1,1,-1},
+        {1,1,1},
+        {-1,1,1}
+    };
+    Rendering::Color cubeColors[] = {
+        {0,0,0,1},
+        {1,0,0,1},
+        {1,0,1,1},
+        {0,0,1,1},
+        {0,1,0,1},
+        {1,1,0,1},
+        {1,1,1,1},
+        {0,1,1,1}
+    };
+    cubeInfo.vertexCount = 8;
+    cubeInfo.position = cubeVerts;
+    cubeInfo.color = cubeColors;
+    Rendering::Triangle tris[] = {
+        {0,2,1},
+        {0,3,2},
+        {3,7,6},
+        {3,6,2},
+        {6,5,2},
+        {2,5,1},
+        {5,0,1},
+        {5,4,0},
+        {4,7,0},
+        {7,3,0},
+        {7,4,6},
+        {4,5,6}
+    };
+    cubeInfo.triangleCount = 12;
+    cubeInfo.triangles = tris;
+
+    Rendering::MeshHandle cubeMesh = renderer.CreateMesh("Cube", cubeInfo);
+    Rendering::Transform cubeTransform = {
+        {0,0,0},
+        Quaternion::Identity(),
+        {1,1,1}
+    };
+
+    Rendering::ShaderDataLayout shaderLayout{};
+    shaderLayout.dataSize = 0;
+    shaderLayout.propertyCount = 0;
+
+    Rendering::ShaderCreateInfo shaderInfo{};
+    shaderInfo.metadata.layer = Rendering::RENDER_LAYER_OPAQUE;
+    shaderInfo.metadata.dataLayout = shaderLayout;
+    shaderInfo.vertexInputs = (Rendering::VertexAttribFlags)(Rendering::VERTEX_POSITION_BIT | Rendering::VERTEX_COLOR_BIT);
+    shaderInfo.samplerCount = 0;
+    shaderInfo.vert = "shaders/vert.spv";
+    shaderInfo.frag = "shaders/test_frag.spv";
+
+    Rendering::ShaderHandle shader = renderer.CreateShader("TestShader", shaderInfo);
+
+    Rendering::MaterialCreateInfo matInfo{};
+    matInfo.metadata.shader = shader;
+    matInfo.metadata.castShadows = true;
+
+    Rendering::MaterialHandle material = renderer.CreateMaterial("TestMat", matInfo);
+
+    Rendering::Transform camTransform = {
+        {0,0,10},
+        Quaternion::Identity(),
+        {1,1,1}
+    };
+    renderer.UpdateCamera(camTransform);
+
+    u64 time = GetTickCount64();
+
     MSG message;
     running = true;
     while (running) {
@@ -94,9 +171,19 @@ int APIENTRY WinMain(_In_ HINSTANCE hInst, _In_ HINSTANCE hInstPrev, _In_ PSTR c
 
             TranslateMessage(&message);
             DispatchMessage(&message);
-
-            renderer.Render();
         }
+
+        u64 newTime = GetTickCount64();
+        u64 deltaTime = newTime - time;
+        r32 deltaTimeSeconds = deltaTime / 1000.0f;
+        time = newTime;
+
+        r32 cubeAngle = glm::radians(time * 0.18f);
+        cubeTransform.rotation = Quaternion::AngleAxis(cubeAngle, { 0,1,0 });
+
+        renderer.DrawMesh(cubeMesh, material, cubeTransform);
+
+        renderer.Render();
     }
 
     return 0;

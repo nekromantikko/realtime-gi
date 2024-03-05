@@ -17,12 +17,12 @@ void Print(const char* fmt, ...) {
 // Memory is owned by caller
 char* AllocFileBytes(const char* fname, u32& outLength) {
 	std::ifstream file(fname, std::ios::ate | std::ios::binary);
-	u32 fileSize = file.tellg();
+	auto fileSize = file.tellg();
 	char* buffer = (char*)calloc(1, fileSize);
 	file.seekg(0);
 	file.read(buffer, fileSize);
 	file.close();
 
-	outLength = fileSize;
+	outLength = (u32)fileSize;
 	return buffer;
 }

@@ -3,15 +3,46 @@
 #include <algorithm>
 
 namespace Rendering {
+	Drawcall::Drawcall(): id(0) {}
+	Drawcall::Drawcall(const Drawcall& other) : id(other.id) {}
+	Drawcall::Drawcall(u16 dataIndex, MeshHandle mesh, MaterialHandle mat, RenderLayer layer) {
+		id = 0;
+		id += (u64)(dataIndex % 0x1000);
+		id += (u64)mesh << 12;
+		id += (u64)mat << 20;
+		id += (u64)layer << 56;
+	}
+
+	std::strong_ordering Drawcall::operator<=>(const Drawcall& other) const {
+		if (id < other.id) return std::strong_ordering::less;
+		if (id > other.id) return std::strong_ordering::greater;
+		else return std::strong_ordering::equal;
+	}
+
+	RenderLayer Drawcall::Layer() const {
+		return (RenderLayer)(id >> 56);
+	}
+	MaterialHandle Drawcall::Material() const {
+		return (MaterialHandle)((id >> 20) % 0x1000);
+	}
+	MeshHandle Drawcall::Mesh() const {
+		return (MeshHandle)((id >> 12) % 0x100);
+	}
+	u16 Drawcall::DataIndex() const {
+		return (u16)(id % 0x1000);
+	}
+
+
 	Renderer::Renderer(HINSTANCE hInst, HWND hWindow): vulkan(hInst, hWindow) {
 		drawcallData = (DrawcallData*)calloc(maxDrawcallCount, sizeof(DrawcallData));
-		instanceData = (PerInstanceData*)calloc(maxTransformCount, sizeof(PerInstanceData));
+		instanceData = (PerInstanceData*)calloc(maxInstanceCount, sizeof(PerInstanceData));
 
 		renderQueue = (Drawcall*)calloc(maxDrawcallCount, sizeof(Drawcall));
-		queueLength = 0;
+		drawcallCount = 0;
+		instanceCount = 0;
 
-		nextDataIndex = 0;
-		nextTransformIndex = 0;
+		mainCamera = Camera{};
+		lightingData = LightingData{};
 	}
 
 	Renderer::~Renderer() {
@@ -20,16 +51,67 @@ namespace Rendering {
 		free(renderQueue);
 	}
 
-	MeshHandle Renderer::CreateMesh(const MeshData& data) {
-		return vulkan.CreateMesh(data);
+	MeshHandle Renderer::CreateMesh(std::string name, const MeshCreateInfo& info) {
+		if (meshNameMap.contains(name)) {
+			DEBUG_LOG("Mesh with name %s already exists", name.c_str());
+			return -1;
+		}
+
+		if (info.triangles == nullptr) {
+			DEBUG_ERROR("Triangles cannot be null");
+		}
+
+		auto handle = vulkan.CreateMesh(info);
+		meshNameMap[name] = handle;
+		return handle;
+	}
+
+	TextureHandle Renderer::CreateTexture(std::string name, const TextureCreateInfo& info) {
+		if (textureNameMap.contains(name)) {
+			DEBUG_LOG("Texture with name %s already exists", name.c_str());
+			return -1;
+		}
+
+		auto handle = vulkan.CreateTexture(info);
+		textureNameMap[name] = handle;
+		return handle;
+	}
+
+	ShaderHandle Renderer::CreateShader(std::string name, const ShaderCreateInfo& info) {
+		if (shaderNameMap.contains(name)) {
+			DEBUG_LOG("Shader with name %s already exists", name.c_str());
+			return -1;
+		}
+
+		if (info.metadata.dataLayout.dataSize > maxShaderDataBlockSize) {
+			DEBUG_ERROR("Data size too large");
+		}
+
+		auto handle = vulkan.CreateShader(info);
+		meshNameMap[name] = handle;
+		shaderMetadataMap[handle] = info.metadata;
+		return handle;
+	}
+
+	MaterialHandle Renderer::CreateMaterial(std::string name, const MaterialCreateInfo& info) {
+		if (materialNameMap.contains(name)) {
+			DEBUG_LOG("Material with name %s already exists", name.c_str());
+			return -1;
+		}
+
+		auto handle = vulkan.CreateMaterial(info);
+		materialNameMap[name] = handle;
+		materialMetadataMap[handle] = info.metadata;
+		return handle;
 	}
 
 	void Renderer::UpdateCamera(const Transform& transform, r32 fov, r32 nearClip, r32 farClip) {
-		glm::mat4 transMat = GetTransformMatrix(transform);
-		cameraData.view = glm::inverse(transMat);
-		r32 aspect = vulkan.GetSurfaceAspect();
-		cameraData.proj = glm::perspective(glm::radians(fov), aspect, nearClip, farClip);
-		cameraData.pos = transform.position;
+		mainCamera.transform = transform;
+		mainCamera.fov = fov;
+		mainCamera.nearClip = nearClip;
+		mainCamera.farClip = farClip;
+
+		RecalculateCameraMatrices();
 	}
 
 	void Renderer::UpdateMainLight(const Transform& transform, const Color& color) {
@@ -44,52 +126,54 @@ namespace Rendering {
 		lightingData.ambientColor = color;
 	}
 
-	s16 Renderer::DrawMesh(MeshHandle mesh, MaterialHandle material, const Transform& transform) {
-		u16 transformIndex = nextTransformIndex++;
-		u16 dataIndex = nextDataIndex++;
+	void Renderer::DrawMesh(MeshHandle mesh, MaterialHandle material, const Transform& transform) {
+		u16 instanceOffset = instanceCount++;
+		u16 callIndex = drawcallCount++;
 
-		DrawcallData data = { 1, transformIndex };
+		DrawcallData data = { 1, instanceOffset };
 
-		drawcallData[dataIndex] = data;
+		drawcallData[callIndex] = data;
 		
-		instanceData[transformIndex] = { GetTransformMatrix(transform) };
+		instanceData[instanceOffset] = { GetTransformMatrix(transform) };
 
-		Drawcall call = 0;
-		call += (dataIndex % 0x1000);
-		call += (u64)mesh << 12;
-		call += (u64)material << 20;
-		// call += (u64)shaders[materials[material].shader].layer << 56;
+		RenderLayer layer = shaderMetadataMap[materialMetadataMap[material].shader].layer;
+		Drawcall call(callIndex, mesh, material, layer);
 
-		renderQueue[queueLength++] = call;
-
-		return dataIndex;
+		renderQueue[callIndex] = call;
 	}
 
 	void Renderer::Render() {
 		// Sort drawcalls
-		auto comp = [](const Drawcall& a, const Drawcall& b)
-		{
-			return a < b;
-		};
-		std::sort(&renderQueue[0], &renderQueue[queueLength], comp);
+		std::sort(&renderQueue[0], &renderQueue[drawcallCount]);
 
-		vulkan.SetInstanceData(instanceData, queueLength);
-		vulkan.SetCameraData(cameraData);
+		vulkan.SetInstanceData(instanceData, instanceCount);
+		vulkan.SetCameraData(mainCamera.data);
 		vulkan.SetLightingData(lightingData);
 
 		vulkan.BeginRenderCommands();
+		vulkan.BeginForwardRenderPass();
+		for (u32 i = 0; i < drawcallCount; i++) {
+			const Drawcall& call = renderQueue[i];
+			MeshHandle meshHandle = call.Mesh();
+			MaterialHandle matHandle = call.Material();
+			MaterialMetadata matData = materialMetadataMap[matHandle];
+			u16 dataIndex = call.DataIndex();
+			DrawcallData data = drawcallData[dataIndex];
+			vulkan.DrawMesh(meshHandle, matData.shader, matHandle, data.instanceOffset, data.instanceCount);
+		}
+		vulkan.EndRenderPass();
 		vulkan.DoFinalBlit();
 		vulkan.EndRenderCommands();
 
 		// Clear render queue
-		queueLength = 0;
-		nextDataIndex = 0;
-		nextTransformIndex = 0;
+		drawcallCount = 0;
+		instanceCount = 0;
 	}
 
 	void Renderer::ResizeSurface() {
 		DEBUG_LOG("Resize");
 		vulkan.RecreateSwapchain();
+		RecalculateCameraMatrices();
 	}
 
 	glm::mat4x4 Renderer::GetTransformMatrix(const Transform& transform) const {
@@ -103,5 +187,13 @@ namespace Rendering {
 		};
 		glm::mat4 scale = glm::scale(glm::mat4(1.0f), transform.scale);
 		return translation * rotation * scale;
+	}
+
+	void Renderer::RecalculateCameraMatrices() {
+		glm::mat4 transMat = GetTransformMatrix(mainCamera.transform);
+		mainCamera.data.view = glm::inverse(transMat);
+		r32 aspect = vulkan.GetSurfaceAspect();
+		mainCamera.data.proj = glm::perspective(glm::radians(mainCamera.fov), aspect, mainCamera.nearClip, mainCamera.farClip);
+		mainCamera.data.pos = mainCamera.transform.position;
 	}
 }

@@ -58,4 +58,10 @@ public:
 	u32 Count() const {
 		return count;
 	}
+	s32 GetHandle(u32 index) const {
+		if (index >= count) {
+			return -1;
+		}
+		return handles[index];
+	}
 };
